@@ -2,7 +2,7 @@ require 'pry'
 require 'active_support/all'
 
 NUM_APPLICANTS = 70
-NUM_TIMESLOTS = 80
+NUM_TIMESLOTS = 100
 NUM_REVIEWERS = 30
 REVIEWERS_PER_INTERVIEW = 2
 APPLICANT_CHOOSE_COUNT = 2
@@ -39,6 +39,7 @@ class Timeslot
 
   def initialize(sequence)
     self.sequence = sequence
+    self.reviewers = []
   end
 
   def full?
@@ -151,15 +152,13 @@ class Simulation
       timeslot.applicant = @applicants.shuffle.detect do |applicant|
         !applicant_booked?(applicant) && applicant.available_for_timeslot?(timeslot.sequence)
       end
-
-      timeslot.reviewers = @reviewers.shuffle.select do |reviewer|
-        reviewer.available_for_timeslot?(timeslot.sequence)
-      end.first(2)
     end
 
-    ### Book more applicants
+    ### Book as many applicants as possible
 
     unbooked_responsive_applicants.each { |applicant| book_applicant!(applicant, 0) }
+
+    ### Now, book the reviewers
 
     ## Results
     {
@@ -241,7 +240,9 @@ class Simulation
   end
 end
 
-results = Array.new(10).map do
+num_runs = 50
+
+results = Array.new(num_runs).map do
   Simulation.new.run
 end
 
@@ -249,7 +250,7 @@ def fmt_percent(num)
   sprintf('%.2f', num * 100) + '%'
 end
 
-puts "Out of 50 runs..."
+puts "Out of #{num_runs} runs..."
 
 puts "% of responsive applicants booked: #{fmt_percent(results.sum { |res| res[:percent_responsive_applicants_booked] / results.length.to_f})}"
 puts "% of slots with enough reviewers: #{fmt_percent(results.sum { |res| res[:percent_slots_with_enough_reviewers] / results.length.to_f})}"
