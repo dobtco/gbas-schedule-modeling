@@ -9,7 +9,7 @@ NUM_TIMESLOTS = args['timeslots'] ? args['timeslots'].to_i : 60
 NUM_REVIEWERS = args['reviewers'] ? args['reviewers'].to_i : 26
 REVIEWERS_PER_INTERVIEW = 2
 APPLICANT_CHOOSE_COUNT = 2
-REVIEWER_CHOOSE_COUNT = 4
+REVIEWER_CHOOSE_COUNT = 6
 RESPONSE_RATES_FOR_AVAILABILITY_REQUEST = {
   'Applicant' => 90,
   'Reviewer' => 97
@@ -166,15 +166,28 @@ class Simulation
 
     ### Now, book the reviewers
 
+    #### Book in random order
     timeslots_in_use.each do |timeslot|
       timeslot.reviewers = @reviewers.shuffle.select do |reviewer|
         reviewer.available_for_timeslot?(timeslot.sequence)
       end.first(2)
     end
 
+    #### Even-out the workload
+    #### `10.times` was chosen via experimentation
+    10.times do
+      reviewers_with_lotta_work.each do |lotta_work_reviewer|
+        timeslots.select { |timeslot| timeslot.reviewers.include?(lotta_work_reviewer) }.each do |timeslot|
+          if (assign_to = @reviewers.detect { |r| !timeslot.reviewers.include?(r) && reviewer_workload(r) < reviewer_workload(lotta_work_reviewer) })
+            timeslot.reviewers = timeslot.reviewers - [lotta_work_reviewer] + [assign_to]
+          end
+        end
+      end
+    end
+
     ## Results
 
-    workload_stats = DescriptiveStatistics::Stats.new(@reviewers.map { |r| reviewer_workload(r) })
+    workload_stats = generate_workload_stats
 
     {
       percent_responsive_applicants_booked: booked_applicants.length / responsive_applicants.length.to_f,
@@ -187,6 +200,18 @@ class Simulation
   end
 
   private
+
+  def generate_workload_stats
+    DescriptiveStatistics::Stats.new(@reviewers.map { |r| reviewer_workload(r) })
+  end
+
+  def reviewers_with_lotta_work
+    workload_stats = generate_workload_stats
+
+    @reviewers.select do |reviewer|
+      reviewer_workload(reviewer) > workload_stats.mean.ceil
+    end
+  end
 
   def book_applicant!(applicant, depth = 0, max_recursion = 10)
     current_sequence = timeslots.detect { |ts| ts.applicant == applicant }.try(:sequence)
