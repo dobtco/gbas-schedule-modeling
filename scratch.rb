@@ -1,9 +1,11 @@
 require 'pry'
 require 'active_support/all'
 
-NUM_APPLICANTS = 70
-NUM_TIMESLOTS = 100
-NUM_REVIEWERS = 30
+args = Hash[ ARGV.join(' ').scan(/--?([^=\s]+)(?:=(\S+))?/) ]
+
+NUM_APPLICANTS = args['applicants'] ? args['applicants'].to_i : 70
+NUM_TIMESLOTS = args['timeslots'] ? args['timeslots'].to_i : 100
+NUM_REVIEWERS = args['reviewers'] ? args['reviewers'].to_i : 30
 REVIEWERS_PER_INTERVIEW = 2
 APPLICANT_CHOOSE_COUNT = 2
 REVIEWER_CHOOSE_COUNT = 5
@@ -242,6 +244,8 @@ end
 
 num_runs = 50
 
+puts "Running #{num_runs} times..."
+
 results = Array.new(num_runs).map do
   Simulation.new.run
 end
@@ -249,8 +253,6 @@ end
 def fmt_percent(num)
   sprintf('%.2f', num * 100) + '%'
 end
-
-puts "Out of #{num_runs} runs..."
 
 puts "% of responsive applicants booked: #{fmt_percent(results.sum { |res| res[:percent_responsive_applicants_booked] / results.length.to_f})}"
 puts "% of slots with enough reviewers: #{fmt_percent(results.sum { |res| res[:percent_slots_with_enough_reviewers] / results.length.to_f})}"
