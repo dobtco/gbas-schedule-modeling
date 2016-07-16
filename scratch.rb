@@ -48,6 +48,10 @@ class Timeslot
     end
   end
 
+  def in_use?
+    !!applicant
+  end
+
   def to_s
     "#<Timeslot sequence=#{sequence} full=#{full?} applicant=#{applicant} primary_reviewer=#{reviewers[0]} secondary_reviewer=#{reviewers[1]}>"
   end
@@ -162,3 +166,8 @@ end
 ## Results
 
 puts "% of responsive applicants booked: #{fmt_percent(@applicants.count { |app| applicant_booked?(app) } / @applicants.select(&:responded_to_availability_request?).length.to_f)}"
+puts "% of slots with enough reviewers: #{fmt_percent(@timeslots.select(&:in_use?).count(&:full?) / @timeslots.select(&:is_use?).to_f)}"
+
+
+
+
