@@ -2,11 +2,9 @@ require 'pry'
 require 'active_support/all'
 require 'descriptive-statistics'
 
-args = Hash[ ARGV.join(' ').scan(/--?([^=\s]+)(?:=(\S+))?/) ]
-
-NUM_APPLICANTS = args['applicants'] ? args['applicants'].to_i : 50
-NUM_TIMESLOTS = args['timeslots'] ? args['timeslots'].to_i : 60
-NUM_REVIEWERS = args['reviewers'] ? args['reviewers'].to_i : 26
+NUM_APPLICANTS = 50
+NUM_TIMESLOTS = 75
+NUM_REVIEWERS = 30
 REVIEWERS_PER_INTERVIEW = 2
 APPLICANT_CHOOSE_COUNT = 2
 REVIEWER_CHOOSE_COUNT = 6
@@ -177,6 +175,7 @@ class Simulation
     workload_stats = generate_workload_stats
 
     {
+      num_applicants_booked: booked_applicants.length,
       percent_responsive_applicants_booked: booked_applicants.length / responsive_applicants.length.to_f,
       percent_slots_with_enough_reviewers: full_timeslots.length / timeslots_in_use.length.to_f,
       average_reviewer_workload: workload_stats.mean,
@@ -340,6 +339,7 @@ class ResultPrinter < Struct.new(:results)
   end
 
   def print
+    puts "# of applicants booked: #{fmt_number(results.sum { |res| res[:num_applicants_booked] / results.length.to_f})}"
     puts "% of responsive applicants booked: #{fmt_percent(results.sum { |res| res[:percent_responsive_applicants_booked] / results.length.to_f})}"
     puts "% of slots with enough reviewers: #{fmt_percent(results.sum { |res| res[:percent_slots_with_enough_reviewers] / results.length.to_f})}"
     puts "Average reviewer workload: #{fmt_number(results.sum { |res| res[:average_reviewer_workload] / results.length.to_f})} interviews/reviewer"
