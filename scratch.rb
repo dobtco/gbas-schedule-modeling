@@ -15,6 +15,14 @@ RESPONSE_RATES_FOR_AVAILABILITY_REQUEST = {
   'Reviewer' => 97
 }
 
+if NUM_APPLICANTS > NUM_TIMESLOTS
+  fail 'Not enough timeslots for all applicants to be interviewed.'
+end
+
+if (NUM_REVIEWERS * REVIEWER_CHOOSE_COUNT) < (REVIEWERS_PER_INTERVIEW * NUM_APPLICANTS)
+  fail 'Not enough reviewers to staff all the interviews.'
+end
+
 # Users won't always pick the # of slots that they're asked to pick
 def randomized_choose_count(ask)
   [
@@ -134,59 +142,17 @@ class Simulation
   end
 
   def run
-    ## Guards
-
-    if NUM_APPLICANTS > NUM_TIMESLOTS
-      fail 'Not enough timeslots for all applicants to be interviewed.'
-    end
-
-    if (NUM_REVIEWERS * REVIEWER_CHOOSE_COUNT) < (REVIEWERS_PER_INTERVIEW * NUM_APPLICANTS)
-      fail 'Not enough reviewers to staff all the interviews.'
-    end
-
-    ## Pick Availability
-
     all_users.reject do |u|
       rand(1..100) > RESPONSE_RATES_FOR_AVAILABILITY_REQUEST[u.class.name]
     end.each(&:pick_availability!)
 
-    ## This is the "algorithm", lol?
+    book_applicants_in_random_order
+    recursively_book_unbooked_applicants
+    book_reviewers_in_random_order
+    even_out_reviewer_workload
+  end
 
-    ### First pass
-
-    @timeslots.each do |timeslot|
-      timeslot.applicant = @applicants.shuffle.detect do |applicant|
-        !applicant_booked?(applicant) && applicant.available_for_timeslot?(timeslot.sequence)
-      end
-    end
-
-    ### Book as many applicants as possible
-
-    unbooked_responsive_applicants.each { |applicant| book_applicant!(applicant, 0) }
-
-    ### Now, book the reviewers
-
-    #### Book in random order
-    timeslots_in_use.each do |timeslot|
-      timeslot.reviewers = @reviewers.shuffle.select do |reviewer|
-        reviewer.available_for_timeslot?(timeslot.sequence)
-      end.first(2)
-    end
-
-    #### Even-out the workload
-    #### `10.times` was chosen via experimentation
-    10.times do
-      reviewers_with_lotta_work.each do |lotta_work_reviewer|
-        timeslots.select { |timeslot| timeslot.reviewers.include?(lotta_work_reviewer) }.each do |timeslot|
-          if (assign_to = @reviewers.detect { |r| !timeslot.reviewers.include?(r) && reviewer_workload(r) < reviewer_workload(lotta_work_reviewer) })
-            timeslot.reviewers = timeslot.reviewers - [lotta_work_reviewer] + [assign_to]
-          end
-        end
-      end
-    end
-
-    ## Results
-
+  def results
     workload_stats = generate_workload_stats
 
     {
@@ -200,6 +166,39 @@ class Simulation
   end
 
   private
+
+  def book_reviewers_in_random_order
+    timeslots_in_use.each do |timeslot|
+      timeslot.reviewers = @reviewers.shuffle.select do |reviewer|
+        reviewer.available_for_timeslot?(timeslot.sequence)
+      end.first(2)
+    end
+  end
+
+  # `10.times` was chosen via experimentation
+  def even_out_reviewer_workload
+    10.times do
+      reviewers_with_lotta_work.each do |lotta_work_reviewer|
+        timeslots.select { |timeslot| timeslot.reviewers.include?(lotta_work_reviewer) }.each do |timeslot|
+          if (assign_to = @reviewers.detect { |r| !timeslot.reviewers.include?(r) && reviewer_workload(r) < reviewer_workload(lotta_work_reviewer) })
+            timeslot.reviewers = timeslot.reviewers - [lotta_work_reviewer] + [assign_to]
+          end
+        end
+      end
+    end
+  end
+
+  def book_applicants_in_random_order
+    @timeslots.each do |timeslot|
+      timeslot.applicant = @applicants.shuffle.detect do |applicant|
+        !applicant_booked?(applicant) && applicant.available_for_timeslot?(timeslot.sequence)
+      end
+    end
+  end
+
+  def recursively_book_unbooked_applicants
+    unbooked_responsive_applicants.each { |applicant| book_applicant!(applicant, 0) }
+  end
 
   def generate_workload_stats
     DescriptiveStatistics::Stats.new(@reviewers.map { |r| reviewer_workload(r) })
@@ -278,7 +277,9 @@ num_runs = 50
 puts "Running #{num_runs} times..."
 
 results = Array.new(num_runs).map do
-  Simulation.new.run
+  sim = Simulation.new
+  sim.run
+  sim.results
 end
 
 def fmt_percent(num)
