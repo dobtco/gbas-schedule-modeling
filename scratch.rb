@@ -139,17 +139,7 @@ class Simulation
     end
   end
 
-  # Phase 2: book users
-  def first_run
-    most_users_indicate_availability
-    book_applicants_in_random_order
-    recursively_book_unbooked_applicants
-    book_reviewers_in_random_order
-    even_out_reviewer_workload
-  end
-
-  # Phase 3: book users without changing existing events
-  def safe_run
+  def run
     starting_events = serialize_events
 
     starting_unbooked_applicants = unbooked_responsive_applicants
@@ -355,9 +345,12 @@ puts "Running #{num_runs} times..."
 
 results = Array.new(num_runs).map do
   sim = Simulation.new
-  sim.first_run
-  sim.most_users_indicate_availability
-  sim.safe_run
+
+  2.times do
+    sim.most_users_indicate_availability
+    sim.run
+  end
+
   sim.results
 end
 
