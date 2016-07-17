@@ -11,7 +11,7 @@ REVIEWERS_PER_INTERVIEW = 2
 APPLICANT_CHOOSE_COUNT = 2
 REVIEWER_CHOOSE_COUNT = 6
 RESPONSE_RATES_FOR_AVAILABILITY_REQUEST = {
-  'Applicant' => 90,
+  'Applicant' => 80,
   'Reviewer' => 97
 }
 
@@ -57,7 +57,7 @@ class Timeslot
   end
 
   def full?
-    if applicant && (reviewers.length == 2)
+    if applicant && (reviewers.length == REVIEWERS_PER_INTERVIEW)
       true
     else
       false
@@ -141,15 +141,36 @@ class Simulation
     end
   end
 
-  def run
-    all_users.reject do |u|
-      rand(1..100) > RESPONSE_RATES_FOR_AVAILABILITY_REQUEST[u.class.name]
-    end.each(&:pick_availability!)
-
+  # Phase 2: book users
+  def first_run
+    most_users_indicate_availability
     book_applicants_in_random_order
     recursively_book_unbooked_applicants
     book_reviewers_in_random_order
     even_out_reviewer_workload
+  end
+
+  # Phase 3: book users without changing existing events
+  def safe_run
+    starting_events = serialize_events
+
+    starting_unbooked_applicants = unbooked_responsive_applicants
+    book_applicants_in_random_order
+    recursively_book_unbooked_applicants(only_change: starting_unbooked_applicants)
+    book_reviewers_in_random_order
+
+    starting_events.all? do |event|
+      if !serialize_events.include?(event)
+        puts event[1].applicant.sequence
+        fail 'This run was not safe!'
+      end
+    end
+  end
+
+  def most_users_indicate_availability
+    unresponsive_users.reject do |u|
+      rand(1..100) > RESPONSE_RATES_FOR_AVAILABILITY_REQUEST[u.class.name]
+    end.each(&:pick_availability!)
   end
 
   def results
@@ -167,11 +188,34 @@ class Simulation
 
   private
 
+  # @return Array of [timeslot, user] pairs
+  def serialize_events
+    [].tap do |arr|
+      timeslots.each do |timeslot|
+        if timeslot.applicant
+          arr << [timeslot, timeslot.applicant]
+        end
+
+        timeslot.reviewers.each do |reviewer|
+          arr << [timeslot, reviewer]
+        end
+      end
+    end
+  end
+
   def book_reviewers_in_random_order
-    timeslots_in_use.each do |timeslot|
-      timeslot.reviewers = @reviewers.shuffle.select do |reviewer|
+    timeslots_in_need_of_reviewers.each do |timeslot|
+      reviewers_needed = REVIEWERS_PER_INTERVIEW - timeslot.reviewers.length
+
+      timeslot.reviewers += @reviewers.shuffle.select do |reviewer|
         reviewer.available_for_timeslot?(timeslot.sequence)
-      end.first(2)
+      end.first(reviewers_needed)
+    end
+  end
+
+  def timeslots_in_need_of_reviewers
+    timeslots_in_use.select do |timeslot|
+      timeslot.reviewers.length < REVIEWERS_PER_INTERVIEW
     end
   end
 
@@ -189,15 +233,15 @@ class Simulation
   end
 
   def book_applicants_in_random_order
-    @timeslots.each do |timeslot|
+    available_timeslots.each do |timeslot|
       timeslot.applicant = @applicants.shuffle.detect do |applicant|
         !applicant_booked?(applicant) && applicant.available_for_timeslot?(timeslot.sequence)
       end
     end
   end
 
-  def recursively_book_unbooked_applicants
-    unbooked_responsive_applicants.each { |applicant| book_applicant!(applicant, 0) }
+  def recursively_book_unbooked_applicants(opts = {})
+    unbooked_responsive_applicants.each { |applicant| book_applicant!(applicant, 0, opts) }
   end
 
   def generate_workload_stats
@@ -212,10 +256,13 @@ class Simulation
     end
   end
 
-  def book_applicant!(applicant, depth = 0, max_recursion = 10)
+  def book_applicant!(applicant, depth = 0, opts = {}, max_recursion = 10)
     current_sequence = timeslots.detect { |ts| ts.applicant == applicant }.try(:sequence)
 
-    available_timeslots = timeslots.select { |timeslot| applicant.available_for_timeslot?(timeslot.sequence) }
+    available_timeslots = timeslots.select do |timeslot|
+      applicant.available_for_timeslot?(timeslot.sequence)
+    end
+
     empty_slot = available_timeslots.detect(&:empty?)
 
     if empty_slot
@@ -224,8 +271,11 @@ class Simulation
       new_sequence = applicant.availability.sample
       timeslot = timeslot_by_sequence(new_sequence)
       previous_applicant = timeslot.applicant
-      timeslot.applicant = applicant
-      book_applicant!(previous_applicant, depth + 1)
+
+      if !opts[:only_change] || previous_applicant.in?(opts[:only_change])
+        timeslot.applicant = applicant
+        book_applicant!(previous_applicant, depth + 1, opts)
+      end
     end
   end
 
@@ -253,8 +303,16 @@ class Simulation
     @timeslots.select(&:in_use?)
   end
 
+  def available_timeslots
+    @timeslots.reject(&:in_use?)
+  end
+
   def all_users
     (@applicants + @reviewers)
+  end
+
+  def unresponsive_users
+    all_users.select { |u| u.availability.blank? }
   end
 
   def timeslot_by_sequence(sequence)
@@ -272,27 +330,35 @@ class Simulation
   end
 end
 
+class ResultPrinter < Struct.new(:results)
+  def fmt_percent(num)
+    sprintf('%.2f', num * 100) + '%'
+  end
+
+  def fmt_number(num)
+    sprintf('%.2f', num)
+  end
+
+  def print
+    puts "% of responsive applicants booked: #{fmt_percent(results.sum { |res| res[:percent_responsive_applicants_booked] / results.length.to_f})}"
+    puts "% of slots with enough reviewers: #{fmt_percent(results.sum { |res| res[:percent_slots_with_enough_reviewers] / results.length.to_f})}"
+    puts "Average reviewer workload: #{fmt_number(results.sum { |res| res[:average_reviewer_workload] / results.length.to_f})} interviews/reviewer"
+    puts "% of reviewers with workflow > 1 standard deviation: #{fmt_percent(results.sum { |res| res[:reviewers_with_workflow_gt_1_sd] / results.length.to_f})}"
+    puts "% of reviewers with workflow > 2 standard deviation: #{fmt_percent(results.sum { |res| res[:reviewers_with_workflow_gt_2_sd] / results.length.to_f})}"
+    puts "% of reviewers with workflow > 3 standard deviation: #{fmt_percent(results.sum { |res| res[:reviewers_with_workflow_gt_3_sd] / results.length.to_f})}"
+  end
+end
+
 num_runs = 50
 
 puts "Running #{num_runs} times..."
 
 results = Array.new(num_runs).map do
   sim = Simulation.new
-  sim.run
+  sim.first_run
+  sim.most_users_indicate_availability
+  sim.safe_run
   sim.results
 end
 
-def fmt_percent(num)
-  sprintf('%.2f', num * 100) + '%'
-end
-
-def fmt_number(num)
-  sprintf('%.2f', num)
-end
-
-puts "% of responsive applicants booked: #{fmt_percent(results.sum { |res| res[:percent_responsive_applicants_booked] / results.length.to_f})}"
-puts "% of slots with enough reviewers: #{fmt_percent(results.sum { |res| res[:percent_slots_with_enough_reviewers] / results.length.to_f})}"
-puts "Average reviewer workload: #{fmt_number(results.sum { |res| res[:average_reviewer_workload] / results.length.to_f})} interviews/reviewer"
-puts "% of reviewers with workflow > 1 standard deviation: #{fmt_percent(results.sum { |res| res[:reviewers_with_workflow_gt_1_sd] / results.length.to_f})}"
-puts "% of reviewers with workflow > 2 standard deviation: #{fmt_percent(results.sum { |res| res[:reviewers_with_workflow_gt_2_sd] / results.length.to_f})}"
-puts "% of reviewers with workflow > 3 standard deviation: #{fmt_percent(results.sum { |res| res[:reviewers_with_workflow_gt_3_sd] / results.length.to_f})}"
+ResultPrinter.new(results).print
