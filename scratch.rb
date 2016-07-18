@@ -175,7 +175,10 @@ class Simulation
       percent_responsive_applicants_booked: booked_applicants.length / responsive_applicants.length.to_f,
       percent_slots_with_enough_reviewers: full_timeslots.length / timeslots_in_use.length.to_f,
       average_reviewer_workload: workload_stats.mean,
-      standard_deviation: workload_stats.standard_deviation
+      standard_deviation: workload_stats.standard_deviation,
+      max_interviews: @reviewers.map do |r|
+        reviewer_workload(r)
+      end.max
     }
   end
 
@@ -350,6 +353,7 @@ class ResultPrinter < Struct.new(:results)
     puts "% of slots with enough reviewers: #{fmt_percent(results.sum { |res| res[:percent_slots_with_enough_reviewers] / results.length.to_f})}"
     puts "Average reviewer workload: #{fmt_number(results.sum { |res| res[:average_reviewer_workload] / results.length.to_f})} interviews/reviewer"
     puts "Reviewer workload: standard deviation: #{fmt_number(results.sum { |res| res[:standard_deviation] / results.length.to_f})}"
+    puts "Max # of interviews per reviewer: #{fmt_number(results.sum { |res| res[:max_interviews] / results.length.to_f})}"
   end
 end
 
