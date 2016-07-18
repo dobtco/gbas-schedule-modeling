@@ -3,13 +3,13 @@ require 'active_support/all'
 require 'descriptive-statistics'
 
 NUM_APPLICANTS = 50
-NUM_TIMESLOTS = 75
-NUM_REVIEWERS = 30
+NUM_TIMESLOTS = 60
+NUM_REVIEWERS = 26
 REVIEWERS_PER_INTERVIEW = 2
 APPLICANT_CHOOSE_COUNT = 2
 REVIEWER_CHOOSE_COUNT = 6
 RESPONSE_RATES_FOR_AVAILABILITY_REQUEST = {
-  'Applicant' => 80,
+  'Applicant' => 90,
   'Reviewer' => 97
 }
 
@@ -92,6 +92,13 @@ class User
   end
 
   def pick_availability!
+    # If a reviewer picks *all* timeslots
+    # if self.class.name == 'Reviewer' && sequence.in?([0])
+    #   NUM_TIMESLOTS.times do |i|
+    #     availability << i
+    #   end
+    # else
+
     randomized_choose_count(choose_count).times do
       availability << new_random_choice
     end
@@ -169,9 +176,7 @@ class Simulation
       percent_responsive_applicants_booked: booked_applicants.length / responsive_applicants.length.to_f,
       percent_slots_with_enough_reviewers: full_timeslots.length / timeslots_in_use.length.to_f,
       average_reviewer_workload: workload_stats.mean,
-      reviewers_with_workflow_gt_1_sd: @reviewers.count { |r| reviewer_workload(r) > (workload_stats.mean + workload_stats.standard_deviation) } / @reviewers.length.to_f,
-      reviewers_with_workflow_gt_2_sd: @reviewers.count { |r| reviewer_workload(r) > (workload_stats.mean + (workload_stats.standard_deviation * 2)) } / @reviewers.length.to_f,
-      reviewers_with_workflow_gt_3_sd: @reviewers.count { |r| reviewer_workload(r) > (workload_stats.mean + (workload_stats.standard_deviation * 3)) } / @reviewers.length.to_f
+      standard_deviation: workload_stats.standard_deviation
     }
   end
 
@@ -193,13 +198,22 @@ class Simulation
   end
 
   def book_reviewers_in_random_order
+    booked = []
+
     timeslots_in_need_of_reviewers.each do |timeslot|
       reviewers_needed = REVIEWERS_PER_INTERVIEW - timeslot.reviewers.length
 
-      timeslot.reviewers += @reviewers.shuffle.select do |reviewer|
+      add_reviewers = @reviewers.shuffle.select do |reviewer|
         reviewer.available_for_timeslot?(timeslot.sequence)
       end.first(reviewers_needed)
+
+      add_reviewers.each do |reviewer|
+        booked << [timeslot, reviewer]
+        timeslot.reviewers << reviewer
+      end
     end
+
+    even_out_reviewer_workload(booked)
   end
 
   def timeslots_in_need_of_reviewers
@@ -209,12 +223,15 @@ class Simulation
   end
 
   # `10.times` was chosen via experimentation
-  def even_out_reviewer_workload
+  def even_out_reviewer_workload(new_events)
     10.times do
       reviewers_with_lotta_work.each do |lotta_work_reviewer|
         timeslots.select { |timeslot| timeslot.reviewers.include?(lotta_work_reviewer) }.each do |timeslot|
-          if (assign_to = @reviewers.detect { |r| !timeslot.reviewers.include?(r) && reviewer_workload(r) < reviewer_workload(lotta_work_reviewer) })
-            timeslot.reviewers = timeslot.reviewers - [lotta_work_reviewer] + [assign_to]
+          if new_events.include?([timeslot, lotta_work_reviewer])
+            if (assign_to = @reviewers.detect { |r| !timeslot.reviewers.include?(r) && reviewer_workload(r) < reviewer_workload(lotta_work_reviewer) })
+              new_events = new_events - [[timeslot, lotta_work_reviewer]] + [[timeslot, assign_to]]
+              timeslot.reviewers = timeslot.reviewers - [lotta_work_reviewer] + [assign_to]
+            end
           end
         end
       end
@@ -333,9 +350,7 @@ class ResultPrinter < Struct.new(:results)
     puts "% of responsive applicants booked: #{fmt_percent(results.sum { |res| res[:percent_responsive_applicants_booked] / results.length.to_f})}"
     puts "% of slots with enough reviewers: #{fmt_percent(results.sum { |res| res[:percent_slots_with_enough_reviewers] / results.length.to_f})}"
     puts "Average reviewer workload: #{fmt_number(results.sum { |res| res[:average_reviewer_workload] / results.length.to_f})} interviews/reviewer"
-    puts "% of reviewers with workflow > 1 standard deviation: #{fmt_percent(results.sum { |res| res[:reviewers_with_workflow_gt_1_sd] / results.length.to_f})}"
-    puts "% of reviewers with workflow > 2 standard deviation: #{fmt_percent(results.sum { |res| res[:reviewers_with_workflow_gt_2_sd] / results.length.to_f})}"
-    puts "% of reviewers with workflow > 3 standard deviation: #{fmt_percent(results.sum { |res| res[:reviewers_with_workflow_gt_3_sd] / results.length.to_f})}"
+    puts "Reviewer workload: standard deviation: #{fmt_number(results.sum { |res| res[:standard_deviation] / results.length.to_f})}"
   end
 end
 
