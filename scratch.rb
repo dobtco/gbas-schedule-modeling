@@ -156,7 +156,6 @@ class Simulation
 
     starting_events.all? do |event|
       if !serialize_events.include?(event)
-        puts event[1].applicant.sequence
         fail 'This run was not safe!'
       end
     end
