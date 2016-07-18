@@ -2,6 +2,8 @@ require 'pry'
 require 'active_support/all'
 require 'descriptive-statistics'
 
+## Constants
+
 NUM_APPLICANTS = 50
 NUM_TIMESLOTS = 60
 NUM_REVIEWERS = 26
@@ -13,37 +15,14 @@ RESPONSE_RATES_FOR_AVAILABILITY_REQUEST = {
   'Reviewer' => 97
 }
 
+## Simple validation
+
 if NUM_APPLICANTS > NUM_TIMESLOTS
   fail 'Not enough timeslots for all applicants to be interviewed.'
 end
 
 if (NUM_REVIEWERS * REVIEWER_CHOOSE_COUNT) < (REVIEWERS_PER_INTERVIEW * NUM_APPLICANTS)
   fail 'Not enough reviewers to staff all the interviews.'
-end
-
-# Users won't always pick the # of slots that they're asked to pick
-def randomized_choose_count(ask)
-  [
-    ask - 2,
-    ask - 1,
-    ask,
-    ask,
-    ask,
-    ask,
-    ask,
-    ask,
-    ask,
-    ask,
-    ask,
-    ask,
-    ask,
-    ask,
-    ask + 1,
-    ask + 1,
-    ask + 2,
-    ask + 2,
-    ask + 3
-  ].sample
 end
 
 class Timeslot
@@ -99,9 +78,34 @@ class User
     #   end
     # else
 
-    randomized_choose_count(choose_count).times do
+    randomized_choose_count.times do
       availability << new_random_choice
     end
+  end
+
+  # Users won't always pick the # of slots that they're asked to pick
+  def randomized_choose_count
+    [
+      choose_count - 2,
+      choose_count - 1,
+      choose_count,
+      choose_count,
+      choose_count,
+      choose_count,
+      choose_count,
+      choose_count,
+      choose_count,
+      choose_count,
+      choose_count,
+      choose_count,
+      choose_count,
+      choose_count,
+      choose_count + 1,
+      choose_count + 1,
+      choose_count + 2,
+      choose_count + 2,
+      choose_count + 3
+    ].sample
   end
 
   def new_random_choice
@@ -112,6 +116,10 @@ class User
     else
       choice
     end
+  end
+
+  def responded_to_availability_request?
+    availability.length > 0
   end
 end
 
@@ -124,10 +132,6 @@ end
 class Applicant < User
   def choose_count
     APPLICANT_CHOOSE_COUNT
-  end
-
-  def responded_to_availability_request?
-    availability.length > 0
   end
 end
 
@@ -151,7 +155,7 @@ class Simulation
 
     starting_unbooked_applicants = unbooked_responsive_applicants
     book_applicants_in_random_order
-    recursively_book_unbooked_applicants(only_change: starting_unbooked_applicants)
+    recursively_book_unbooked_applicants(starting_unbooked_applicants)
     book_reviewers_in_random_order
 
     starting_events.all? do |event|
@@ -248,8 +252,8 @@ class Simulation
     end
   end
 
-  def recursively_book_unbooked_applicants(opts = {})
-    unbooked_responsive_applicants.each { |applicant| book_applicant!(applicant, 0, opts) }
+  def recursively_book_unbooked_applicants(only_change_applicants)
+    unbooked_responsive_applicants.each { |applicant| book_applicant!(applicant, 0, only_change_applicants) }
   end
 
   def generate_workload_stats
@@ -264,7 +268,7 @@ class Simulation
     end
   end
 
-  def book_applicant!(applicant, depth = 0, opts = {}, max_recursion = 10)
+  def book_applicant!(applicant, depth, only_change_applicants, max_recursion = 10)
     current_sequence = timeslots.detect { |ts| ts.applicant == applicant }.try(:sequence)
 
     available_timeslots = timeslots.select do |timeslot|
@@ -280,9 +284,9 @@ class Simulation
       timeslot = timeslot_by_sequence(new_sequence)
       previous_applicant = timeslot.applicant
 
-      if !opts[:only_change] || previous_applicant.in?(opts[:only_change])
+      if previous_applicant.in?(only_change_applicants)
         timeslot.applicant = applicant
-        book_applicant!(previous_applicant, depth + 1, opts)
+        book_applicant!(previous_applicant, depth + 1, only_change_applicants)
       end
     end
   end
