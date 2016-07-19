@@ -5,20 +5,22 @@ require 'descriptive-statistics'
 ## Constants
 
 NUM_APPLICANTS = 50
-NUM_TIMESLOTS = 60
-NUM_REVIEWERS = 26
+NUM_REVIEWERS = 30
+NUM_TIMESLOTS = 30
 REVIEWERS_PER_INTERVIEW = 2
 APPLICANT_CHOOSE_COUNT = 2
 REVIEWER_CHOOSE_COUNT = 6
+CONCURRENCY = 2
 RESPONSE_RATES_FOR_AVAILABILITY_REQUEST = {
   'Applicant' => 90,
   'Reviewer' => 97
 }
+NUM_EVENTS = NUM_TIMESLOTS * CONCURRENCY
 
 ## Simple validation
 
-if NUM_APPLICANTS > NUM_TIMESLOTS
-  fail 'Not enough timeslots for all applicants to be interviewed.'
+if NUM_APPLICANTS > NUM_EVENTS
+  fail 'Not enough events for all applicants to be interviewed.'
 end
 
 if (NUM_REVIEWERS * REVIEWER_CHOOSE_COUNT) < (REVIEWERS_PER_INTERVIEW * NUM_APPLICANTS)
@@ -66,10 +68,6 @@ class User
     "#{self.class.name} ##{sequence}"
   end
 
-  def available_for_timeslot?(sequence)
-    availability.include?(sequence)
-  end
-
   def pick_availability!
     # If a reviewer picks *all* timeslots
     # if self.class.name == 'Reviewer' && sequence.in?([0])
@@ -79,7 +77,15 @@ class User
     # else
 
     randomized_choose_count.times do
-      availability << new_random_choice
+      timeslot_sequences_at_same_time(new_random_choice).each do |x|
+        availability << x
+      end
+    end
+  end
+
+  def timeslot_sequences_at_same_time(sequence)
+    (0..(NUM_EVENTS - 1)).select do |x|
+      (x / CONCURRENCY) == (sequence / CONCURRENCY)
     end
   end
 
@@ -109,7 +115,7 @@ class User
   end
 
   def new_random_choice
-    choice = rand(0..(NUM_TIMESLOTS - 1))
+    choice = rand(0..(NUM_EVENTS - 1))
 
     if availability.include?(choice)
       new_random_choice
@@ -136,8 +142,10 @@ class Applicant < User
 end
 
 class Simulation
+  attr_reader :timeslots, :applicants, :reviewers
+
   def initialize
-    @timeslots = (0..NUM_TIMESLOTS - 1).map do |i|
+    @timeslots = (0..NUM_EVENTS - 1).map do |i|
       Timeslot.new(i)
     end
 
@@ -180,10 +188,26 @@ class Simulation
       percent_slots_with_enough_reviewers: full_timeslots.length / timeslots_in_use.length.to_f,
       average_reviewer_workload: workload_stats.mean,
       standard_deviation: workload_stats.standard_deviation,
-      max_interviews: @reviewers.map do |r|
+      max_interviews: reviewers.map do |r|
         reviewer_workload(r)
       end.max
     }
+  end
+
+  def validate_results
+    timeslots.each do |ts|
+      if ts.reviewers[0].present? && ts.reviewers[0] == ts.reviewers[1]
+        fail "Can't book the same reviewer twice in the same slot!"
+      end
+    end
+
+    reviewers.each do |reviewer|
+      booked_sequences = timeslots.select { |timeslot| timeslot.reviewers.include?(reviewer) }.map(&:sequence).map { |x| x / CONCURRENCY }
+
+      if booked_sequences.length != booked_sequences.uniq.length
+        fail "Can't book the same reviewer twice at the same time."
+      end
+    end
   end
 
   private
@@ -209,8 +233,8 @@ class Simulation
     timeslots_in_need_of_reviewers.each do |timeslot|
       reviewers_needed = REVIEWERS_PER_INTERVIEW - timeslot.reviewers.length
 
-      add_reviewers = @reviewers.shuffle.select do |reviewer|
-        reviewer.available_for_timeslot?(timeslot.sequence)
+      add_reviewers = reviewers.shuffle.select do |reviewer|
+        user_available_for_timeslot?(reviewer, timeslot)
       end.first(reviewers_needed)
 
       add_reviewers.each do |reviewer|
@@ -220,6 +244,21 @@ class Simulation
     end
 
     even_out_reviewer_workload(booked)
+  end
+
+  def user_available_for_timeslot?(user, timeslot)
+    if user.is_a?(Reviewer)
+      user.availability.include?(timeslot.sequence) &&
+      timeslots_at_time(timeslot).none? { |timeslot| timeslot.reviewers.include?(user) }
+    else
+      user.availability.include?(timeslot.sequence)
+    end
+  end
+
+  def timeslots_at_time(timeslot)
+    timeslots.select do |ts|
+      (ts.sequence / CONCURRENCY) == (timeslot.sequence / CONCURRENCY)
+    end
   end
 
   def timeslots_in_need_of_reviewers
@@ -234,7 +273,7 @@ class Simulation
       reviewers_with_lotta_work.each do |lotta_work_reviewer|
         timeslots.select { |timeslot| timeslot.reviewers.include?(lotta_work_reviewer) }.each do |timeslot|
           if new_events.include?([timeslot, lotta_work_reviewer])
-            if (assign_to = @reviewers.detect { |r| !timeslot.reviewers.include?(r) && reviewer_workload(r) < reviewer_workload(lotta_work_reviewer) })
+            if (assign_to = reviewers.detect { |r| user_available_for_timeslot?(r, timeslot) && reviewer_workload(r) < reviewer_workload(lotta_work_reviewer) })
               new_events = new_events - [[timeslot, lotta_work_reviewer]] + [[timeslot, assign_to]]
               timeslot.reviewers = timeslot.reviewers - [lotta_work_reviewer] + [assign_to]
             end
@@ -246,8 +285,8 @@ class Simulation
 
   def book_applicants_in_random_order
     available_timeslots.each do |timeslot|
-      timeslot.applicant = @applicants.shuffle.detect do |applicant|
-        !applicant_booked?(applicant) && applicant.available_for_timeslot?(timeslot.sequence)
+      timeslot.applicant = applicants.shuffle.detect do |applicant|
+        !applicant_booked?(applicant) && user_available_for_timeslot?(applicant, timeslot)
       end
     end
   end
@@ -257,13 +296,13 @@ class Simulation
   end
 
   def generate_workload_stats
-    DescriptiveStatistics::Stats.new(@reviewers.map { |r| reviewer_workload(r) })
+    DescriptiveStatistics::Stats.new(reviewers.map { |r| reviewer_workload(r) })
   end
 
   def reviewers_with_lotta_work
     workload_stats = generate_workload_stats
 
-    @reviewers.select do |reviewer|
+    reviewers.select do |reviewer|
       reviewer_workload(reviewer) > workload_stats.mean.ceil
     end
   end
@@ -272,7 +311,7 @@ class Simulation
     current_sequence = timeslots.detect { |ts| ts.applicant == applicant }.try(:sequence)
 
     available_timeslots = timeslots.select do |timeslot|
-      applicant.available_for_timeslot?(timeslot.sequence)
+      user_available_for_timeslot?(applicant, timeslot)
     end
 
     empty_slot = available_timeslots.detect(&:empty?)
@@ -296,11 +335,11 @@ class Simulation
   end
 
   def responsive_applicants
-    @applicants.select(&:responded_to_availability_request?)
+    applicants.select(&:responded_to_availability_request?)
   end
 
   def booked_applicants
-    @applicants.select { |app| applicant_booked?(app) }
+    applicants.select { |app| applicant_booked?(app) }
   end
 
   def unbooked_responsive_applicants
@@ -312,15 +351,15 @@ class Simulation
   end
 
   def timeslots_in_use
-    @timeslots.select(&:in_use?)
+    timeslots.select(&:in_use?)
   end
 
   def available_timeslots
-    @timeslots.reject(&:in_use?)
+    timeslots.reject(&:in_use?)
   end
 
   def all_users
-    (@applicants + @reviewers)
+    (applicants + reviewers)
   end
 
   def unresponsive_users
@@ -328,11 +367,7 @@ class Simulation
   end
 
   def timeslot_by_sequence(sequence)
-    @timeslots.detect { |timeslot| timeslot.sequence == sequence }
-  end
-
-  def timeslots
-    @timeslots
+    timeslots.detect { |timeslot| timeslot.sequence == sequence }
   end
 
   def applicant_booked?(applicant)
@@ -361,6 +396,31 @@ class ResultPrinter < Struct.new(:results)
   end
 end
 
+class TimeslotPrinter < Struct.new(:simulation)
+  def print
+    i = 0
+    simulation.timeslots.each_slice(CONCURRENCY) do |slice|
+      puts "## Time #{i += 1}"
+
+      slice.each do |ts|
+        puts "|-----------------"
+
+        if ts.in_use?
+          puts "| Applicant: #{ts.applicant.try(:sequence)}"
+          puts "| Reviewer 1: #{ts.reviewers[0].try(:sequence)}"
+          puts "| Reviewer 2: #{ts.reviewers[1].try(:sequence)}"
+        else
+          puts "| Not in use"
+        end
+
+        puts "|-----------------\n\n"
+      end
+
+      puts "\n"
+    end
+  end
+end
+
 num_runs = 50
 
 puts "Running #{num_runs} times..."
@@ -373,7 +433,12 @@ results = Array.new(num_runs).map do
     sim.run
   end
 
+  sim.validate_results
+
+  TimeslotPrinter.new(sim).print
+
   sim.results
+  fail 'done'
 end
 
 ResultPrinter.new(results).print
