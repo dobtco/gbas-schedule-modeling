@@ -435,10 +435,10 @@ results = Array.new(num_runs).map do
 
   sim.validate_results
 
-  TimeslotPrinter.new(sim).print
+  # TimeslotPrinter.new(sim).print
 
   sim.results
-  fail 'done'
+  # fail 'done'
 end
 
 ResultPrinter.new(results).print
