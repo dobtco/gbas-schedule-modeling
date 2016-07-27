@@ -7,7 +7,7 @@ require 'yaml'
 
 NUM_APPLICANTS = 50
 NUM_REVIEWERS = 25
-NUM_TIMESLOTS = 60
+NUM_TIMESLOTS = 50
 REVIEWERS_PER_INTERVIEW = 1
 APPLICANT_CHOOSE_COUNT = 4
 REVIEWER_CHOOSE_COUNT = 4
@@ -320,11 +320,13 @@ class Simulation
     if empty_slot
       empty_slot.applicant = applicant
     elsif depth < max_recursion
-      new_sequence = applicant.availability.sample
-      timeslot = timeslot_by_sequence(new_sequence)
-      previous_applicant = timeslot.applicant
+      found_seq = applicant.availability.select do |seq|
+        timeslot_by_sequence(seq).applicant.in?(only_change_applicants)
+      end.sample
 
-      if previous_applicant.in?(only_change_applicants)
+      if found_seq
+        timeslot = timeslot_by_sequence(found_seq)
+        previous_applicant = timeslot.applicant
         timeslot.applicant = applicant
         book_applicant!(previous_applicant, depth + 1, only_change_applicants)
       end
